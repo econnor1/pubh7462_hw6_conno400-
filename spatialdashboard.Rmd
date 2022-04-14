@@ -1,0 +1,406 @@
+---
+title: "Spatial Dashboard of Various Locations in Minnesota"
+author: "Eric Connor"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include = FALSE, echo = FALSE}
+library(tidyverse)
+library(lubridate)
+library(gt)
+library(paletteer)
+library(plotly)
+library(flexdashboard)
+library(forcats)
+library(DataExplorer)
+library(stringr)
+library(RColorBrewer)
+library(tidyverse)
+library(lubridate)
+library(paletteer)
+library(ggridges)
+library(plotly)
+library(sf)
+library(ggmap)
+library(tidycensus)
+library(leaflet)
+library(osmdata)
+library(tigris)
+library(ggthemes)
+
+#Working directory for .RMD
+knitr::opts_knit$set(echo = TRUE,
+                     root.dir = rprojroot::find_rstudio_root_file())
+
+#Controlling figure output in markdown
+knitr::opts_chunk$set(
+  fig.width = 6,
+  out.width = "90%",
+ fig.align  = "center",
+  cache = FALSE,
+  eval  = TRUE,
+  echo  = TRUE,
+  warning = FALSE
+)
+
+#My Colours (from viridis)
+my_purple <- "#440154FF"
+my_yellow <- "#FDE725FF"
+
+#Set Theme for ggplot2
+theme_set(theme_bw() + theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom"))
+
+#Set Scientific notation output and decimal places for knitr
+options(scipen = 999)
+options(digits = 4)
+options(dplyr.summarise.inform = FALSE)
+
+```
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+### Location of Hockey, Golf, and other Recreation Sport Locations, Minnesota
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, echo = FALSE}
+
+mn.box <- osmdata::getbb("minnesota")
+mn.box.outline <- osmdata::getbb("minnesota", format_out = "polygon")[[1]] %>% # Pull the shape of Minnesota
+  as_tibble() %>%
+  rename(longitude = V1, latitude = V2)
+
+# Get map from ggmap
+# Get the base map (foundational layer)
+mn_base.map <- get_map(
+                location = mn.box,
+                source   = "google",
+                maptype  = "roadmap",
+                crop = TRUE
+               )
+
+# Create the base map of Minnesota 
+mn_base.gg <- ggmap(mn_base.map) +
+  geom_polygon(data = mn.box.outline, aes(x = longitude, y = latitude), colour = "black", size = 1.6, alpha = 0.1) +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+
+#available_tags("leisure")
+
+# Pull information from Minnesota about leisure activities including mini golf, ice rinks, stadiums, sports centers, and disc golf courses
+osm_leisure_sf.df <- opq(bbox = "minnesota") %>%
+             add_osm_feature(key = "leisure", value = c("miniature_golf", "ice_rink", "stadium", "sports_centre", "disc_golf_course")) %>%
+  osmdata_sf()
+
+# Clean Names of Leisure Destinations to Neat Format
+leisure_points.df <- osm_leisure_sf.df$osm_points %>% 
+  janitor::clean_names() %>%
+  filter(!is.na(leisure)) %>% #only retain 'valid' tags
+  dplyr::select(osm_id, name, leisure, opening_hours, phone, website, geometry) %>%
+  mutate(leisure = fct_recode(leisure, "Ice Rink" = "ice_rink",
+                                       "Miniature Golf" = "miniature_golf",
+                                       "Stadium" = "stadium",
+                                       "Sports Center" = "sports_centre",
+                                       "Disc Golf Course" = "disc_golf_course")) %>%
+  mutate(leisure = str_to_title(leisure) %>% as_factor())
+
+leisure_draft <- leisure_points.df %>%
+  as_tibble() %>%
+  dplyr::select(-geometry) %>%
+  gt_preview()
+
+leisure_draft1 <- mn_base.gg +
+  geom_sf(data = leisure_points.df,
+          aes(colour = leisure),
+          inherit.aes = FALSE,
+          alpha = 0.8, shape = 16) +
+  labs(title = "Minnesota Leisure OSM Features") + 
+  scale_colour_viridis_d("Leisure Type") +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+
+# Call viridis library  
+library(viridis, quietly = TRUE)
+
+# Extract the levels/order of shop type factor
+leisure_types <- levels(leisure_points.df$leisure)
+n_types    <- length(leisure_types)
+
+# Initialize our colour pallete (discrete in this case)
+my_pallete <- colorFactor(viridis_pal(option = "D")(n_types), domain = leisure_types)
+
+# Call leaflet plot to ensure individual parts work correctly
+leaflet_draft <- leaflet(data = leisure_points.df) %>%
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    color   = ~my_pallete(leisure_types),
+    opacity = 0.4,
+    weight  = 2, #outline strength
+    radius  = 4 #size of circle
+  ) %>%
+  addLegend(
+    title    = "Leisure Type",
+    position = "bottomright",
+    colors   = viridis_pal(option = "D")(n_types),
+    labels   = leisure_types 
+  )
+
+# Call HTML tools to have labels work properly
+library(htmltools, quietly = TRUE)
+
+# Add a text label for hours of operation, and sports location information
+leisure_label.df <- leisure_points.df %>%
+  mutate(
+    text_label = str_c(
+                   name,
+                   "<br/>Store Type: ",
+                   leisure,
+                   "<br/>Open Hours: ",
+                   opening_hours,
+                   "<br/>Phone: ",
+                   phone,
+                   "<br/>Website: ",
+                   website
+                 )
+  )
+
+# Display the final leaflet plot
+leisure_leaf <- leaflet(data = leisure_label.df) %>%
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    color   = ~my_pallete(leisure_types),
+    label   = ~map(text_label, HTML), # map over labels, make html
+    opacity = 0.4, # alpha
+    weight  = 2, # outline strength
+    radius  = 4 # size of circle
+  ) %>%
+  addLegend(
+    title    = "Leisure Type",
+    position = "bottomright",
+    colors   = viridis_pal(option = "D")(n_types),
+    labels   = leisure_types 
+  )
+
+```
+
+```{r, echo = FALSE}
+
+leisure_leaf
+
+```
+
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### Total Population in Occupied Housing by Tenure, ACS: 2016-2020
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+
+# Save the cache so you don't need to call the same API request over and over
+options(tigris_use_cache = TRUE)
+
+# Call the ACS API, returns a sf object
+mn_pop.df <- get_acs(
+  geography = "tract",
+  variables = "B25033_002", # Code for total population in occupied housing units by tenure
+  state     = "MN",
+  county    = "Hennepin",
+  year      = 2020,
+  geometry  = TRUE
+)
+
+mn_pop_plotly.df <- mn_pop.df %>%
+  mutate(
+    tract      = str_split(NAME, ",") %>%
+                 map_chr(1) %>%
+                 str_remove("Census Tract "),
+    text_label = str_c(
+                  "Tract: ",
+                  tract,
+                  "\nTotal Population in Housing Units: ",
+                  scales::comma(estimate)
+                 )
+  )
+
+# Get map of Hennepin County, Minnesota, object
+pop.gg <- ggplot() + 
+  geom_sf(data = mn_pop_plotly.df, 
+          aes(fill = estimate, text = text_label),
+          colour = "black", size = 0.1) + 
+  labs(title = "Hennepin County, MN 2020 ACS \nTotal Population in Housing Units") + 
+  scale_fill_viridis_c("Total Population", labels = scales::comma) +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+
+# Plot Hennepin County Census Level Information on Covariate of Interest
+pop_plot <- ggplotly(pop.gg,
+         tooltip = "text",
+         height  = 600,
+         width   = 800) %>%
+    style(hoveron = "fills")
+
+pop_plot
+
+```
+
+### Minnesota Visitors Guide to Touring: Popular Destination Spots
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, echo = FALSE}
+
+# Create shape of Minnesota to capture locations
+mn.box <- osmdata::getbb("minnesota")
+mn.box.outline <- osmdata::getbb("minnesota", format_out = "polygon")[[1]] %>%
+  as_tibble() %>%
+  rename(longitude = V1, latitude = V2)
+
+# Get map from ggmap
+# Get the base map (foundational layer)
+mn_base.map <- get_map(
+                location = mn.box,
+                source   = "google",
+                maptype  = "roadmap",
+                crop = TRUE
+               )
+
+# Create the base map of Minnesota
+mn_base.gg <- ggmap(mn_base.map) +
+  geom_polygon(data = mn.box.outline, aes(x = longitude, y = latitude), colour = "black", size = 1.6, alpha = 0.1) +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+
+#available_tags("tourism")
+
+# Pull available information on tourism locations to help tourists navigate Minnesota
+osm_tourism_sf.df <- opq(bbox = "minnesota") %>%
+             add_osm_feature(key = "tourism", value = c("theme_park", "aquarium", "museum", "zoo")) %>%
+  osmdata_sf()
+
+# Capture information of various tourism locations of store location information
+tourism_points.df <- osm_tourism_sf.df$osm_points %>% 
+  janitor::clean_names() %>%
+  filter(!is.na(tourism)) %>% #only retain 'valid' tags
+  dplyr::select(osm_id, name, tourism, opening_hours, phone, website, geometry) %>%
+  mutate(tourism = fct_recode(tourism, "Theme Park" = "theme_park",
+                                       "Aquarium" = "aquarium",
+                                       "Museum" = "museum",
+                                       "Zoo" = "zoo")) %>%
+  mutate(tourism = str_to_title(tourism) %>% as_factor())
+
+tourism_draft <- tourism_points.df %>%
+  as_tibble() %>%
+  dplyr::select(-geometry) %>%
+  gt_preview()
+
+tourism_draft1 <- mn_base.gg +
+  geom_sf(data = tourism_points.df,
+          aes(colour = tourism),
+          inherit.aes = FALSE,
+          alpha = 0.8, shape = 16) +
+  labs(title = "Minnesota Tourism Destination Spots") + 
+  scale_colour_viridis_d("Tourism Location") +
+  theme_map() +
+  theme(
+    plot.title   = element_text(size  = 16,
+                                hjust = 0.5),
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.position = "right"
+  )
+
+# Call viridis library for varied colors
+library(viridis, quietly = TRUE)
+
+# Extract the levels/order of shop type factor
+tourism_types <- levels(tourism_points.df$tourism)
+n_types    <- length(tourism_types)
+
+# Initialize  colour pallete for discrete option
+my_pallete <- colorFactor(viridis_pal(option = "D")(n_types), domain = tourism_types)
+
+# Call leaflet plot of Minnesota
+leaflet_draft <- leaflet(data = tourism_points.df) %>%
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    color   = ~my_pallete(tourism_types),
+    opacity = 0.4,
+    weight  = 2, # outline strength
+    radius  = 4 # size of circle
+  ) %>%
+  addLegend(
+    title    = "Tourism Type",
+    position = "bottomright",
+    colors   = viridis_pal(option = "D")(n_types),
+    labels   = tourism_types 
+  )
+
+# Call HTML tools to get labels to display properly among groups in leaflet
+library(htmltools, quietly = TRUE)
+
+# Add a text label to various points with tourism destination spots information 
+tourism_label.df <- tourism_points.df %>%
+  mutate(
+    text_label = str_c(
+                   name,
+                   "<br/>Store Type: ",
+                   tourism,
+                   "<br/>Open Hours: ",
+                   opening_hours,
+                   "<br/>Phone: ",
+                   phone,
+                   "<br/>Website: ",
+                   website
+                 )
+  )
+
+# Display the final leaflet of Tourism Locations in Minnesota
+tourism_leaf <- leaflet(data = tourism_label.df) %>%
+  addProviderTiles('CartoDB.Positron') %>% 
+  addCircleMarkers(
+    color   = ~my_pallete(tourism_types),
+    label   = ~map(text_label, HTML), # map over labels, make html
+    opacity = 0.4, # alpha
+    weight  = 2, # outline strength
+    radius  = 4 # size of circle
+  ) %>%
+  addLegend(
+    title    = "Tourism Type",
+    position = "bottomright",
+    colors   = viridis_pal(option = "D")(n_types),
+    labels   = tourism_types 
+  )
+
+```
+
+```{r, echo=FALSE}
+
+tourism_leaf
+
+```
+
