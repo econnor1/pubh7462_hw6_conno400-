@@ -96,7 +96,7 @@ mn_base.gg <- ggmap(mn_base.map) +
 #available_tags("leisure")
 
 # Pull information from Minnesota about leisure activities including mini golf, ice rinks, stadiums, sports centers, and disc golf courses
-osm_leisure_sf.df <- opq(bbox = "minnesota") %>%
+osm_leisure_sf.df <- opq(bbox = "minnesota", timeout = 100) %>%
              add_osm_feature(key = "leisure", value = c("miniature_golf", "ice_rink", "stadium", "sports_centre", "disc_golf_course")) %>%
   osmdata_sf()
 
@@ -298,7 +298,7 @@ mn_base.gg <- ggmap(mn_base.map) +
 #available_tags("tourism")
 
 # Pull available information on tourism locations to help tourists navigate Minnesota
-osm_tourism_sf.df <- opq(bbox = "minnesota") %>%
+osm_tourism_sf.df <- opq(bbox = "minnesota", timeout = 100) %>%
              add_osm_feature(key = "tourism", value = c("theme_park", "aquarium", "museum", "zoo")) %>%
   osmdata_sf()
 
